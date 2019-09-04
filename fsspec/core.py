@@ -468,8 +468,13 @@ class BytesCache(BaseCache):
         self.start = None
         self.end = None
         self.trim = trim
+        print('Instantiated BytesCache...')
+        print(f'Cache:  {self.cache}')
+        print(f'Fetcher is {self.fetcher}')
 
     def _fetch(self, start, end):
+        print('**********  Running _fetch ***********')
+        print(start, end)
         # TODO: only set start/end after fetch, in case it fails?
         # is this where retry logic might go?
         if self.blocksize:
@@ -480,17 +485,29 @@ class BytesCache(BaseCache):
             return b""
         if self.start is None and self.end is None:
             # First read
+            # start, end = 0, self.blocksize
+            start, end = 0, end
+            print(' ------ This is the first read --------')
+            print(self.start, self.end)
+            print(start, bend)
             self.cache = self.fetcher(start, bend)
+            print(f'BytesCache.cache:  {self.cache}')
             self.start = start
+            print(f'self.start is:  {self.start}')
         elif start < self.start:
+            print('---- start < self.start ----')
+            print(start, self.start)
             if self.end - end > self.blocksize:
+                print('end - end > self.blocksize')
                 self.cache = self.fetcher(start, bend)
                 self.start = start
             else:
+                print(self.end - end < self.blocksize)
                 new = self.fetcher(start, self.start)
                 self.start = start
                 self.cache = new + self.cache
         elif end > self.end:
+            print(' -- end > self.end -- ')
             if self.end > self.size:
                 pass
             elif end - self.end > self.blocksize:
@@ -501,7 +518,9 @@ class BytesCache(BaseCache):
                 self.cache = self.cache + new
 
         self.end = self.start + len(self.cache)
+        print(f'self.end:  {self.end}')
         offset = start - self.start
+        print(f'offset:  {offset}')
         out = self.cache[offset:offset + end - start]
         if self.trim:
             num = (self.end - self.start) // (self.blocksize + 1)

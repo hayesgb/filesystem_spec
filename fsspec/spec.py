@@ -528,6 +528,8 @@ class AbstractFileSystem(up):
     def isdir(self, path):
         """Is this entry directory-like?"""
         try:
+            print('Test isdir?')
+            print(self.info(path))
             return self.info(path)['type'] == 'directory'
         except FileNotFoundError:
             return False
@@ -891,6 +893,7 @@ class AbstractBufferedFile(io.IOBase):
             self.forced = False
             self.location = None
 
+        print(f'self.loc:  {self.loc}')
     @property
     def closed(self):
         # get around this attr being read-only in IOBase
@@ -938,10 +941,13 @@ class AbstractBufferedFile(io.IOBase):
         whence : {0, 1, 2}
             from start of file, current location or end of file, resp.
         """
+        print('$$$$ seeking $$$$$')
+        print(f'whence is:  {whence}')
         loc = int(loc)
         if not self.mode == 'rb':
             raise ValueError('Seek only available in read mode')
         if whence == 0:
+            print(f'whence = 0, loc={loc}')
             nloc = loc
         elif whence == 1:
             nloc = self.loc + loc
@@ -953,6 +959,7 @@ class AbstractBufferedFile(io.IOBase):
         if nloc < 0:
             raise ValueError('Seek before start of file')
         self.loc = nloc
+        print(f'seek location: {self.loc}')
         return self.loc
 
     def write(self, data):
@@ -1049,6 +1056,7 @@ class AbstractBufferedFile(io.IOBase):
         length : int (-1)
             Number of bytes to read; if <0, all remaining bytes.
         """
+        print('++++ Here we call the read method +++++')
         length = -1 if length is None else int(length)
         if self.mode != 'rb':
             raise ValueError('File not in read mode')
@@ -1057,8 +1065,13 @@ class AbstractBufferedFile(io.IOBase):
         if self.closed:
             raise ValueError('I/O operation on closed file.')
         logger.debug("%s read: %i - %i" % (self, self.loc, self.loc + length))
+        print(f'{self} read: {self.loc} - {self.loc + length}' )
+        print(str(self.loc) + "," + str(self.loc+length))
         out = self.cache._fetch(self.loc, self.loc + length)
+        print(f'out from read method: {out}')
         self.loc += len(out)
+        print(f'self.loc:  {self.loc}')
+        print(f'!!! end read method !!!')
         return out
 
     def readinto(self, b):
