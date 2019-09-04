@@ -154,33 +154,26 @@ def seek_delimiter(file, delimiter, blocksize):
     blocksize: int
         Number of bytes to read from the file at once.
     """
-    print(f'(((((( SEEK DELIMITER  )))))')
-    print(f'file.tell:  {file.tell()}')
     if file.tell() == 0:
         return
 
     last = b''
     while True:
         current = file.read(blocksize)
-        print(current)
         if not current:
             return
         full = last + current
-        print(f'full:  {full}')
         try:
             if delimiter in full:
                 i = full.index(delimiter)
-                print(f'try delimiter:  {file.tell() - (len(full) - i) + len(delimiter)}')
                 file.seek(file.tell() - (len(full) - i) + len(delimiter))
                 return
             elif len(current) < blocksize:
-                print(f'current less than blocksize:  {current}, {blocksize}')
                 # end-of-file without delimiter
                 return
         except ValueError:
             pass
         last = full[-len(delimiter):]
-        print(f'last... {last}')
 
 
 def read_block(f, offset, length, delimiter=None):
@@ -217,10 +210,8 @@ def read_block(f, offset, length, delimiter=None):
     >>> read_block(f, 10, 10, delimiter=b'\\n')  # doctest: +SKIP
     b'Bob, 200\\nCharlie, 300'
     """
-    print(f'##### READ BLOCK ####')
-    print(f'offset, length, delimiter:  {offset}, {length}, {delimiter}')
+
     if delimiter:
-        print('delimiter...')
         f.seek(offset)
         seek_delimiter(f, delimiter, 2**16)
         
@@ -229,17 +220,14 @@ def read_block(f, offset, length, delimiter=None):
         start = f.tell()
         length -= start - offset
 
-        print(f'seek again... {start}, {length}')
         f.seek(start + length)
         seek_delimiter(f, delimiter, 2**16)
         end = f.tell()
 
         offset = start
         length = end - start
-    print(f'final seek... offset:  {offset}')
     f.seek(offset)
     b = f.read(length)
-    print(f'b: {b}')
     return b
 
 
