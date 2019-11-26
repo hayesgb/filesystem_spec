@@ -21,10 +21,17 @@ class HTTPFileSystem(AbstractFileSystem):
     "http(s)://server.com/stuff?thing=other"; otherwise only links within
     HTML href tags will be used.
     """
-    sep = '/'
 
-    def __init__(self, simple_links=True, block_size=None, same_scheme=True,
-                 **storage_options):
+    sep = "/"
+
+    def __init__(
+        self,
+        simple_links=True,
+        block_size=None,
+        same_scheme=True,
+        size_policy=None,
+        **storage_options
+    ):
         """
         Parameters
         ----------
@@ -37,13 +44,13 @@ class HTTPFileSystem(AbstractFileSystem):
         same_scheme: True
             When doing ls/glob, if this is True, only consider paths that have
             http/https matching the input URLs.
+        size_policy: this argument is deprecated
         storage_options: key-value
             May be credentials, e.g., `{'auth': ('username', 'pword')}` or any
             other parameters passed on to requests
         """
         AbstractFileSystem.__init__(self)
-        self.block_size = (block_size if block_size is not None
-                           else DEFAULT_BLOCK_SIZE)
+        self.block_size = block_size if block_size is not None else DEFAULT_BLOCK_SIZE
         self.simple_links = simple_links
         self.same_schema = same_scheme
         self.kwargs = storage_options
@@ -54,6 +61,8 @@ class HTTPFileSystem(AbstractFileSystem):
         """ For HTTP, we always want to keep the full URL
         """
         return path
+
+    # TODO: override get
 
     def ls(self, url, detail=True):
         # ignoring URL-encoded arguments
@@ -67,25 +76,32 @@ class HTTPFileSystem(AbstractFileSystem):
         for l in links:
             if isinstance(l, tuple):
                 l = l[1]
-            if l.startswith('http'):
+            if l.startswith("http"):
                 if self.same_schema:
-                    if l.split(':', 1)[0] == url.split(':', 1)[0]:
+                    if l.split(":", 1)[0] == url.split(":", 1)[0]:
                         out.add(l)
-                elif l.replace('https', 'http').startswith(
-                        url.replace('https', 'http')):
+                elif l.replace("https", "http").startswith(
+                    url.replace("https", "http")
+                ):
                     # allowed to cross http <-> https
                     out.add(l)
-            elif l.startswith('/') and len(l) > 1:
-                out.add(parts.scheme + '://' + parts.netloc + l)
+            elif l.startswith("/") and len(l) > 1:
+                out.add(parts.scheme + "://" + parts.netloc + l)
             else:
-                if l not in ['..', '../']:
+                if l not in ["..", "../"]:
                     # Ignore FTP-like "parent"
-                    out.add('/'.join([url.rstrip('/'), l.lstrip('/')]))
-        if not out and url.endswith('/'):
-            return self.ls(url.rstrip('/'), detail=True)
+                    out.add("/".join([url.rstrip("/"), l.lstrip("/")]))
+        if not out and url.endswith("/"):
+            return self.ls(url.rstrip("/"), detail=True)
         if detail:
-            return [{'name': u, 'size': None, 'type': 'directory'
-                     if u.endswith('/') else 'file'} for u in out]
+            return [
+                {
+                    "name": u,
+                    "size": None,
+                    "type": "directory" if u.endswith("/") else "file",
+                }
+                for u in out
+            ]
         else:
             return list(sorted(out))
 
@@ -100,7 +116,7 @@ class HTTPFileSystem(AbstractFileSystem):
 
     def exists(self, path):
         kwargs = self.kwargs.copy()
-        kwargs['stream'] = True
+        kwargs["stream"] = True
         try:
             r = self.session.get(path, **kwargs)
             r.close()
@@ -108,12 +124,20 @@ class HTTPFileSystem(AbstractFileSystem):
         except requests.HTTPError:
             return False
 
-    def _open(self, url, mode='rb', block_size=None, **kwargs):
+    def _open(
+        self,
+        path,
+        mode="rb",
+        block_size=None,
+        autocommit=None,  # XXX: This differs from the base class.
+        cache_options=None,
+        **kwargs
+    ):
         """Make a file-like object
 
         Parameters
         ----------
-        url: str
+        path: str
             Full URL with protocol
         mode: string
             must be "rb"
@@ -123,17 +147,24 @@ class HTTPFileSystem(AbstractFileSystem):
         kwargs: key-value
             Any other parameters, passed to requests calls
         """
-        if mode != 'rb':
+        if mode != "rb":
             raise NotImplementedError
         block_size = block_size if block_size is not None else self.block_size
         kw = self.kwargs.copy()
-        kw.update(kwargs)
-        kw.pop('autocommit', None)
+        kw.update(kwargs)  # this does nothing?
         if block_size:
-            return HTTPFile(self, url, self.session, block_size, **kw)
+            return HTTPFile(
+                self,
+                path,
+                self.session,
+                block_size,
+                mode=mode,
+                cache_options=cache_options,
+                **kw
+            )
         else:
-            kw['stream'] = True
-            r = self.session.get(url, **kw)
+            kw["stream"] = True
+            r = self.session.get(path, **kw)
             r.raise_for_status()
             r.raw.decode_content = True
             return r.raw
@@ -153,10 +184,10 @@ class HTTPFileSystem(AbstractFileSystem):
         corresponding file will not work).
         """
         size = False
-        for policy in ['head', 'get']:
+        for policy in ["head", "get"]:
             try:
                 size = file_size(url, self.session, policy, **self.kwargs)
-                if size is not None:
+                if size:
                     break
             except Exception:
                 pass
@@ -164,7 +195,7 @@ class HTTPFileSystem(AbstractFileSystem):
             # get failed, so conclude URL does not exist
             if size is False:
                 raise FileNotFoundError(url)
-        return {"name": url, "size": size, "type": "file"}
+        return {"name": url, "size": size or None, "type": "file"}
 
 
 class HTTPFile(AbstractBufferedFile):
@@ -192,16 +223,33 @@ class HTTPFile(AbstractBufferedFile):
     kwargs: all other key-values are passed to requests calls.
     """
 
-    def __init__(self, fs, url, session=None, block_size=None, mode='rb',
-                 cache_type='bytes', size=None, **kwargs):
-        if mode != 'rb':
-            raise NotImplementedError('File mode not supported')
+    def __init__(
+        self,
+        fs,
+        url,
+        session=None,
+        block_size=None,
+        mode="rb",
+        cache_type="bytes",
+        cache_options=None,
+        size=None,
+        **kwargs
+    ):
+        if mode != "rb":
+            raise NotImplementedError("File mode not supported")
         self.url = url
         self.session = session if session is not None else requests.Session()
         if size is not None:
-            self.details = {'name': url, 'size': size, 'type': 'file'}
-        super().__init__(fs=fs, path=url, mode=mode, block_size=block_size,
-                         cache_type=cache_type, **kwargs)
+            self.details = {"name": url, "size": size, "type": "file"}
+        super().__init__(
+            fs=fs,
+            path=url,
+            mode=mode,
+            block_size=block_size,
+            cache_type=cache_type,
+            cache_options=cache_options,
+            **kwargs
+        )
         self.cache.size = self.size or self.blocksize
 
     def read(self, length=-1):
@@ -215,9 +263,11 @@ class HTTPFile(AbstractBufferedFile):
             read only part of the data will raise a ValueError.
         """
         if (
-                (length < 0 and self.loc == 0) or  # explicit read all
-                (length > (self.size or length)) or  # read more than there is
-                (self.size and self.size < self.blocksize)  # all fits in one block anyway
+            (length < 0 and self.loc == 0)
+            or (length > (self.size or length))  # explicit read all
+            or (  # read more than there is
+                self.size and self.size < self.blocksize
+            )  # all fits in one block anyway
         ):
             self._fetch_all()
         if self.size is None:
@@ -233,11 +283,12 @@ class HTTPFile(AbstractBufferedFile):
         This is only called when position is still at zero,
         and read() is called without a byte-count.
         """
-        r = self.session.get(self.url, **self.kwargs)
-        r.raise_for_status()
-        out = r.content
-        self.cache = AllBytes(out)
-        self.size = len(out)
+        if not isinstance(self.cache, AllBytes):
+            r = self.session.get(self.url, **self.kwargs)
+            r.raise_for_status()
+            out = r.content
+            self.cache = AllBytes(out)
+            self.size = len(out)
 
     def _fetch_range(self, start, end):
         """Download a block of data
@@ -248,24 +299,25 @@ class HTTPFile(AbstractBufferedFile):
         requested, an exception is raised.
         """
         kwargs = self.kwargs.copy()
-        headers = kwargs.pop('headers', {})
-        headers['Range'] = 'bytes=%i-%i' % (start, end - 1)
+        headers = kwargs.pop("headers", {})
+        headers["Range"] = "bytes=%i-%i" % (start, end - 1)
         r = self.session.get(self.url, headers=headers, stream=True, **kwargs)
         if r.status_code == 416:
             # range request outside file
-            return b''
+            return b""
         r.raise_for_status()
         if r.status_code == 206:
             # partial content, as expected
             out = r.content
-        elif 'Content-Length' in r.headers:
-            cl = int(r.headers['Content-Length'])
+        elif "Content-Length" in r.headers:
+            cl = int(r.headers["Content-Length"])
             if cl <= end - start:
                 # data size OK
                 out = r.content
             else:
-                raise ValueError('Got more bytes (%i) than requested (%i)' % (
-                    cl, end - start))
+                raise ValueError(
+                    "Got more bytes (%i) than requested (%i)" % (cl, end - start)
+                )
         else:
             cl = 0
             out = []
@@ -276,41 +328,42 @@ class HTTPFile(AbstractBufferedFile):
                     cl += len(chunk)
                     if cl > end - start:
                         raise ValueError(
-                            'Got more bytes so far (>%i) than requested (%i)' % (
-                                cl, end - start))
+                            "Got more bytes so far (>%i) than requested (%i)"
+                            % (cl, end - start)
+                        )
                 else:
                     break
-            out = b''.join(out)
+            out = b"".join(out)
         return out
 
 
-def file_size(url, session=None, size_policy='head', **kwargs):
+def file_size(url, session=None, size_policy="head", **kwargs):
     """Call HEAD on the server to get file size
 
     Default operation is to explicitly allow redirects and use encoding
     'identity' (no compression) to get the true size of the target.
     """
     kwargs = kwargs.copy()
-    ar = kwargs.pop('allow_redirects', True)
-    head = kwargs.get('headers', {}).copy()
-    head['Accept-Encoding'] = 'identity'
+    ar = kwargs.pop("allow_redirects", True)
+    head = kwargs.get("headers", {}).copy()
+    head["Accept-Encoding"] = "identity"
     session = session or requests.Session()
-    if size_policy == 'head':
+    if size_policy == "head":
         r = session.head(url, allow_redirects=ar, **kwargs)
-    elif size_policy == 'get':
-        kwargs['stream'] = True
+    elif size_policy == "get":
+        kwargs["stream"] = True
         r = session.get(url, allow_redirects=ar, **kwargs)
     else:
-        raise TypeError('size_policy must be "head" or "get", got %s'
-                        '' % size_policy)
-    if 'Content-Length' in r.headers:
-        return int(r.headers['Content-Length'])
-    elif 'Content-Range' in r.headers:
-        return int(r.headers['Content-Range'].split('/')[1])
+        raise TypeError('size_policy must be "head" or "get", got %s' "" % size_policy)
+    if "Content-Length" in r.headers:
+        return int(r.headers["Content-Length"])
+    elif "Content-Range" in r.headers:
+        return int(r.headers["Content-Range"].split("/")[1])
 
 
 class AllBytes(object):
     """Cache entire contents of a remote URL"""
+
     def __init__(self, data):
         self.data = data
 

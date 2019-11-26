@@ -30,9 +30,9 @@ Base Classes
    fsspec.spec.AbstractBufferedFile
    fsspec.FSMap
    fsspec.core.OpenFile
+   fsspec.core.BaseCache
 
 .. autoclass:: fsspec.spec.AbstractFileSystem
-   :members:
 
 .. autoclass:: fsspec.spec.Transaction
    :members:
@@ -44,6 +44,9 @@ Base Classes
    :members:
 
 .. autoclass:: fsspec.core.OpenFile
+   :members:
+
+.. autoclass:: fsspec.core.BaseCache
    :members:
 
 
@@ -62,6 +65,7 @@ Built-in Implementations
    fsspec.implementations.webhdfs.WebHDFS
    fsspec.implementations.zip.ZipFileSystem
    fsspec.implementations.cached.CachingFileSystem
+   fsspec.implementations.cached.WholeFileCacheFileSystem
 
 .. autoclass:: fsspec.implementations.ftp.FTPFileSystem
    :members: __init__
@@ -73,6 +77,7 @@ Built-in Implementations
    :members: __init__
 
 .. autoclass:: fsspec.implementations.local.LocalFileSystem
+   :members:
 
 .. autoclass:: fsspec.implementations.memory.MemoryFileSystem
    :members: __init__
@@ -88,3 +93,29 @@ Built-in Implementations
 
 .. autoclass:: fsspec.implementations.cached.CachingFileSystem
    :members: __init__
+
+.. autoclass:: fsspec.implementations.cached.WholeFileCacheFileSystem
+
+.. _readbuffering:
+
+Read Buffering
+--------------
+
+.. autosummary::
+
+  fsspec.caching.ReadAheadCache
+  fsspec.caching.BytesCache
+  fsspec.caching.MMapCache
+  fsspec.caching.BlockCache
+
+.. autoclass:: fsspec.caching.ReadAheadCache
+   :members:
+
+.. autoclass:: fsspec.caching.BytesCache
+   :members:
+
+.. autoclass:: fsspec.caching.MMapCache
+   :members:
+
+.. autoclass:: fsspec.caching.BlockCache
+   :members:

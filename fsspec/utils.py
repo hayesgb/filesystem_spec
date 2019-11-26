@@ -37,53 +37,49 @@ def infer_storage_options(urlpath, inherit_storage_options=None):
     "url_query": "q=1", "extra": "value"}
     """
     # Handle Windows paths including disk name in this special case
-    if re.match(r'^[a-zA-Z]:[\\/]', urlpath):
-        return {'protocol': 'file',
-                'path': urlpath}
+    if re.match(r"^[a-zA-Z]:[\\/]", urlpath):
+        return {"protocol": "file", "path": urlpath}
 
     parsed_path = urlsplit(urlpath)
-    protocol = parsed_path.scheme or 'file'
+    protocol = parsed_path.scheme or "file"
     if parsed_path.fragment:
         path = "#".join([parsed_path.path, parsed_path.fragment])
     else:
         path = parsed_path.path
-    if protocol == 'file':
+    if protocol == "file":
         # Special case parsing file protocol URL on Windows according to:
         # https://msdn.microsoft.com/en-us/library/jj710207.aspx
-        windows_path = re.match(r'^/([a-zA-Z])[:|]([\\/].*)$', path)
+        windows_path = re.match(r"^/([a-zA-Z])[:|]([\\/].*)$", path)
         if windows_path:
-            path = '%s:%s' % windows_path.groups()
+            path = "%s:%s" % windows_path.groups()
 
     if protocol in ["http", "https"]:
         # for HTTP, we don't want to parse, as requests will anyway
         return {"protocol": protocol, "path": urlpath}
 
-    options = {
-        'protocol': protocol,
-        'path': path,
-    }
+    options = {"protocol": protocol, "path": path}
 
     if parsed_path.netloc:
         # Parse `hostname` from netloc manually because `parsed_path.hostname`
         # lowercases the hostname which is not always desirable (e.g. in S3):
         # https://github.com/dask/dask/issues/1417
-        options['host'] = parsed_path.netloc.rsplit('@', 1)[-1].rsplit(':', 1)[0]
+        options["host"] = parsed_path.netloc.rsplit("@", 1)[-1].rsplit(":", 1)[0]
 
         if protocol in ("s3", "gcs", "gs"):
-            options["path"] = options['host'] + options["path"]
+            options["path"] = options["host"] + options["path"]
         else:
-            options["host"] = options['host']
+            options["host"] = options["host"]
         if parsed_path.port:
-            options['port'] = parsed_path.port
+            options["port"] = parsed_path.port
         if parsed_path.username:
-            options['username'] = parsed_path.username
+            options["username"] = parsed_path.username
         if parsed_path.password:
-            options['password'] = parsed_path.password
+            options["password"] = parsed_path.password
 
     if parsed_path.query:
-        options['url_query'] = parsed_path.query
+        options["url_query"] = parsed_path.query
     if parsed_path.fragment:
-        options['url_fragment'] = parsed_path.fragment
+        options["url_fragment"] = parsed_path.fragment
 
     if inherit_storage_options:
         update_storage_options(options, inherit_storage_options)
@@ -96,17 +92,26 @@ def update_storage_options(options, inherited=None):
         inherited = {}
     collisions = set(options) & set(inherited)
     if collisions:
-        collisions = '\n'.join('- %r' % k for k in collisions)
-        raise KeyError("Collision between inferred and specified storage "
-                       "options:\n%s" % collisions)
+        collisions = "\n".join("- %r" % k for k in collisions)
+        raise KeyError(
+            "Collision between inferred and specified storage "
+            "options:\n%s" % collisions
+        )
     options.update(inherited)
 
 
-compressions = {'gz': 'gzip', 'bz2': 'bz2', 'xz': 'xz', 'zip': 'zip'}
+# Compression extensions registered via fsspec.compression.register_compression
+compressions = {}
 
 
 def infer_compression(filename):
-    extension = os.path.splitext(filename)[-1].strip('.')
+    """Infer compression, if available, from filename.
+
+    Infer a named compression type, if registered and available, from filename
+    extension. This includes builtin (gz, bz2, zip) compressions, as well as
+    optional compressions. See fsspec.compression.register_compression.
+    """
+    extension = os.path.splitext(filename)[-1].strip(".")
     if extension in compressions:
         return compressions[extension]
 
@@ -141,61 +146,76 @@ def build_name_function(max_int):
 
 
 def seek_delimiter(file, delimiter, blocksize):
-    """ Seek current file to next byte after a delimiter bytestring
+    r"""Seek current file to file start, file end, or byte after delimiter seq.
 
-    This seeks the file to the next byte following the delimiter.  It does
-    not return anything.  Use ``file.tell()`` to see location afterwards.
+    Seeks file to next chunk delimiter, where chunks are defined on file start,
+    a delimiting sequence, and file end. Use file.tell() to see location afterwards.
+    Note that file start is a valid split, so must be at offset > 0 to seek for
+    delimiter.
 
     Parameters
     ----------
     file: a file
     delimiter: bytes
-        a delimiter like ``b'\n'`` or message sentinel
+        a delimiter like ``b'\n'`` or message sentinel, matching file .read() type
     blocksize: int
         Number of bytes to read from the file at once.
+
+
+    Returns
+    -------
+    Returns True if a delimiter was found, False if at file start or end.
+
     """
 
     if file.tell() == 0:
-        return
+        # beginning-of-file, return without seek
+        return False
 
-    last = b''
+    # Interface is for binary IO, with delimiter as bytes, but initialize last
+    # with result of file.read to preserve compatibility with text IO.
+    last = None
     while True:
         current = file.read(blocksize)
         if not current:
-            return
-        full = last + current
+            # end-of-file without delimiter
+            return False
+        full = last + current if last else current
         try:
             if delimiter in full:
                 i = full.index(delimiter)
                 file.seek(file.tell() - (len(full) - i) + len(delimiter))
-                return
+                return True
             elif len(current) < blocksize:
                 # end-of-file without delimiter
-                return
-        except ValueError:
+                return False
+        except (OSError, ValueError):
             pass
-        last = full[-len(delimiter):]
+        last = full[-len(delimiter) :]
 
 
-def read_block(f, offset, length, delimiter=None):
+def read_block(f, offset, length, delimiter=None, split_before=False):
     """ Read a block of bytes from a file
 
     Parameters
     ----------
-    fn: string
-        Path to filename
+    f: File
+        Open file
     offset: int
         Byte offset to start read
     length: int
-        Number of bytes to read
+        Number of bytes to read, read through end of file if None
     delimiter: bytes (optional)
         Ensure reading starts and stops at delimiter bytestring
+    split_before: bool (optional)
+        Start/stop read *before* delimiter bytestring.
+
 
     If using the ``delimiter=`` keyword argument we ensure that the read
     starts and stops at delimiter boundaries that follow the locations
     ``offset`` and ``offset + length``.  If ``offset`` is zero then we
-    start at zero.  The bytestring returned WILL include the
-    terminating delimiter string.
+    start at zero, regardless of delimiter.  The bytestring returned WILL
+    include the terminating delimiter string.
 
     Examples
     --------
@@ -213,15 +233,23 @@ def read_block(f, offset, length, delimiter=None):
     """
     if delimiter:
         f.seek(offset)
-        seek_delimiter(f, delimiter, 2**16)
+        found_start_delim = seek_delimiter(f, delimiter, 2 ** 16)
         if length is None:
             return f.read()
         start = f.tell()
         length -= start - offset
 
         f.seek(start + length)
-        seek_delimiter(f, delimiter, 2**16)
+        found_end_delim = seek_delimiter(f, delimiter, 2 ** 16)
         end = f.tell()
+
+        # Adjust split location to before delimiter iff seek found the
+        # delimiter sequence, not start or end of file.
+        if found_start_delim and split_before:
+            start -= len(delimiter)
+
+        if found_end_delim and split_before:
+            end -= len(delimiter)
 
         offset = start
         length = end - start
@@ -252,11 +280,11 @@ def stringify_path(filepath):
 
     Parameters
     ----------
-    filepath : object to be converted
+    filepath: object to be converted
 
     Returns
     -------
-    filepath_str : maybe a string version of the object
+    filepath_str: maybe a string version of the object
 
     Notes
     -----

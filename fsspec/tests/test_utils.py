@@ -1,12 +1,6 @@
 import io
 import pytest
-from fsspec.utils import infer_storage_options, infer_compression, seek_delimiter, read_block
-
-
-def test_infer_compression():
-    assert infer_compression('fn.zip') == 'zip'
-    assert infer_compression('fn.gz') == 'gzip'
-    assert infer_compression('fn.unknown') is None
+from fsspec.utils import infer_storage_options, seek_delimiter, read_block
 
 
 def test_read_block():
@@ -28,6 +22,98 @@ def test_read_block():
     for ols in [[(0, 3), (3, 3), (6, 3), (9, 2)], [(0, 4), (4, 4), (8, 4)]]:
         out = [read_block(f, o, l, b"\n") for o, l in ols]
         assert b"".join(filter(None, out)) == data
+
+
+def test_read_block_split_before():
+    """Test start/middle/end cases of split_before."""  # noqa: I
+    d = (
+        "#header" + "".join(">foo{i}\nFOOBAR{i}\n".format(i=i) for i in range(100000))
+    ).encode()
+
+    # Read single record at beginning.
+    # All reads include beginning of file and read through termination of
+    # delimited record.
+    assert read_block(io.BytesIO(d), 0, 10, delimiter=b"\n") == b"#header>foo0\n"
+    assert (
+        read_block(io.BytesIO(d), 0, 10, delimiter=b"\n", split_before=True)
+        == b"#header>foo0"
+    )
+    assert (
+        read_block(io.BytesIO(d), 0, 10, delimiter=b">") == b"#header>foo0\nFOOBAR0\n>"
+    )
+    assert (
+        read_block(io.BytesIO(d), 0, 10, delimiter=b">", split_before=True)
+        == b"#header>foo0\nFOOBAR0\n"
+    )
+
+    # Read multiple records at beginning.
+    # All reads include beginning of file and read through termination of
+    # delimited record.
+    assert (
+        read_block(io.BytesIO(d), 0, 27, delimiter=b"\n")
+        == b"#header>foo0\nFOOBAR0\n>foo1\nFOOBAR1\n"
+    )
+    assert (
+        read_block(io.BytesIO(d), 0, 27, delimiter=b"\n", split_before=True)
+        == b"#header>foo0\nFOOBAR0\n>foo1\nFOOBAR1"
+    )
+    assert (
+        read_block(io.BytesIO(d), 0, 27, delimiter=b">")
+        == b"#header>foo0\nFOOBAR0\n>foo1\nFOOBAR1\n>"
+    )
+    assert (
+        read_block(io.BytesIO(d), 0, 27, delimiter=b">", split_before=True)
+        == b"#header>foo0\nFOOBAR0\n>foo1\nFOOBAR1\n"
+    )
+
+    # Read with offset spanning into next record, splits on either side of delimiter.
+    # Read not spanning the full record returns nothing.
+    assert read_block(io.BytesIO(d), 10, 3, delimiter=b"\n") == b"FOOBAR0\n"
+    assert (
+        read_block(io.BytesIO(d), 10, 3, delimiter=b"\n", split_before=True)
+        == b"\nFOOBAR0"
+    )
+    assert read_block(io.BytesIO(d), 10, 3, delimiter=b">") == b""
+    assert read_block(io.BytesIO(d), 10, 3, delimiter=b">", split_before=True) == b""
+
+    # Read with offset spanning multiple records, splits on either side of delimiter
+    assert (
+        read_block(io.BytesIO(d), 10, 20, delimiter=b"\n")
+        == b"FOOBAR0\n>foo1\nFOOBAR1\n"
+    )
+    assert (
+        read_block(io.BytesIO(d), 10, 20, delimiter=b"\n", split_before=True)
+        == b"\nFOOBAR0\n>foo1\nFOOBAR1"
+    )
+    assert read_block(io.BytesIO(d), 10, 20, delimiter=b">") == b"foo1\nFOOBAR1\n>"
+    assert (
+        read_block(io.BytesIO(d), 10, 20, delimiter=b">", split_before=True)
+        == b">foo1\nFOOBAR1\n"
+    )
+
+    # Read record at end, all records read to end
+
+    tlen = len(d)
+
+    assert (
+        read_block(io.BytesIO(d), tlen - 30, 35, delimiter=b"\n")
+        == b">foo99999\nFOOBAR99999\n"
+    )
+
+    assert (
+        read_block(io.BytesIO(d), tlen - 30, 35, delimiter=b"\n", split_before=True)
+        == b"\n>foo99999\nFOOBAR99999\n"
+    )
+
+    assert (
+        read_block(io.BytesIO(d), tlen - 30, 35, delimiter=b">")
+        == b"foo99999\nFOOBAR99999\n"
+    )
+
+    assert (
+        read_block(io.BytesIO(d), tlen - 30, 35, delimiter=b">", split_before=True)
+        == b">foo99999\nFOOBAR99999\n"
+    )
 
 
 def test_seek_delimiter_endline():
